@@ -138,7 +138,7 @@ def eval_step(model: nnx.Module, metrics: nnx.MultiMetric, batch):
     metrics.update(loss=loss, logits=logits, labels=batch[1])  # In-place updates.
 
 
-def train_classifier(num_epochs=200):
+def train_classifier(num_epochs=300):
     # Create a trainer module with specified hyperparameters
     print('create model')
     model = DenseNet(dims=2,
@@ -147,6 +147,10 @@ def train_classifier(num_epochs=200):
                      num_blocks=(6, 6, 6, 6),
                      init_conv_kernel_size=3,
                      init_conv_strides=1,
+                     bn_size=2,
+                     growth_rate=16,
+                     dropout_rate=0.2,
+                     pre_dropout=True,
                      rngs=nnx.rnglib.Rngs(jax.random.PRNGKey(seed)))
     nnx.display(model)
 
@@ -208,7 +212,7 @@ def eval_model(model, metrics, loader):
         eval_step(model, metrics, test_batch)
 
 
-model = train_classifier(num_epochs=200)
+model = train_classifier(num_epochs=300)
 
 # Test trained model
 metrics.reset()

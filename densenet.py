@@ -4,26 +4,38 @@ import typing
 import jax.numpy as jnp
 from flax import nnx
 
+DENSENET_BLOCKS_121 = (6, 12, 24, 16)
+DENSENET_BLOCKS_169 = (6, 12, 32, 32)
+DENSENET_BLOCKS_201 = (6, 12, 48, 32)
+DENSENET_BLOCKS_264 = (6, 12, 64, 48)
+
+
+def _dummy_fn(x):
+    return x
+
 
 class DenseNet(nnx.Module):
     def __init__(self,
                  dims: typing.Literal[1, 2, 3],
                  in_features: int,
                  num_classes: int,
-                 num_blocks: typing.Tuple[int, ...] | typing.List[int],
+                 num_blocks: typing.Sequence[int],
                  *,
-                 init_conv_kernel_size: int = 3,
+                 init_conv_kernel_size: int = 0,
                  init_conv_strides: int = 1,
-                 init_pool_kernel_size: int | None = None,
-                 init_pool_strides: int | None = None,
+                 init_pool_kernel_size: int = 0,
+                 init_pool_strides: int = 1,
                  bn_size: int = 2,  # Bottleneck size (factor of growth rate) for the output of the 1 convolution
                  growth_rate: int = 16,  # Number of output channels of the 3 convolution
+                 dropout_rate: float = 0.0,
+                 pre_dropout: bool = False,
                  act_fn: callable = nnx.relu,
                  kernel_init: nnx.Initializer = nnx.initializers.kaiming_uniform(),
                  rngs: nnx.rnglib.Rngs):
-        init_conv_kernel_size = (init_conv_kernel_size,) * dims
-        init_conv_strides = (init_conv_strides,) * dims
-        if init_pool_kernel_size is not None and init_pool_strides is not None:
+        if init_conv_kernel_size != 0:
+            init_conv_kernel_size = (init_conv_kernel_size,) * dims
+            init_conv_strides = (init_conv_strides,) * dims
+        if init_pool_kernel_size != 0:
             init_pool_kernel_size = (init_pool_kernel_size,) * dims
             init_pool_strides = (init_pool_strides,) * dims
 
@@ -53,14 +65,18 @@ class DenseNet(nnx.Module):
                                       kernel_init=kernel_init,
                                       use_bias=False,
                                       rngs=rngs)
+                self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
             def __call__(self, x):
-                z = self.bn1(x)
+                z = self.dropout(x) if pre_dropout else x
+                z = self.bn1(z)
                 z = act_fn(z)
                 z = self.conv1(z)
+                z = self.dropout(z)
                 z = self.bn2(z)
                 z = act_fn(z)
                 z = self.conv2(z)
+                z = z if pre_dropout else self.dropout(z)
                 x_out = jnp.concatenate([x, z], axis=-1)
                 return x_out
 
@@ -90,27 +106,34 @@ class DenseNet(nnx.Module):
                                      kernel_init=kernel_init,
                                      use_bias=False,
                                      rngs=rngs)
+                self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
                 self.avg_pool = functools.partial(nnx.avg_pool, window_shape=win_size_2, strides=win_size_2)
 
-            def __call__(self, x, train=True):
+            def __call__(self, x):
+                x = self.dropout(x) if pre_dropout else x
                 x = self.bn(x)
                 x = act_fn(x)
                 x = self.conv(x)
+                x = x if pre_dropout else self.dropout(x)
                 x = self.avg_pool(x)
                 return x
 
         self.act_fn = act_fn
         c_hidden = growth_rate * bn_size  # The start number of hidden channels
-        self.conv = nnx.Conv(in_features=in_features,
-                             out_features=c_hidden,
-                             kernel_size=init_conv_kernel_size,
-                             strides=init_conv_strides,
-                             kernel_init=kernel_init,
-                             rngs=rngs)
-        if init_pool_kernel_size is not None and init_pool_strides is not None:
-            self.max_pool = functools.partial(nnx.max_pool, window_shape=win_size_3, strides=win_size_2, padding='SAME')
+        if init_conv_kernel_size != 0:
+            self.conv = nnx.Conv(in_features=in_features,
+                                 out_features=c_hidden,
+                                 kernel_size=init_conv_kernel_size,
+                                 strides=init_conv_strides,
+                                 kernel_init=kernel_init,
+                                 rngs=rngs)
         else:
-            self.max_pool = lambda x: x
+            self.conv = _dummy_fn
+        if init_pool_kernel_size != 0:
+            self.max_pool = functools.partial(nnx.max_pool, window_shape=init_pool_kernel_size,
+                                              strides=init_pool_strides, padding='SAME')
+        else:
+            self.max_pool = _dummy_fn
 
         self.blocks = []
         for block_idx, num_layers in enumerate(num_blocks):
@@ -124,6 +147,7 @@ class DenseNet(nnx.Module):
                 )
                 c_hidden //= 2
 
+        self.dropout = nnx.Dropout(dropout_rate, rngs=rngs) if pre_dropout else _dummy_fn
         self.bn = nnx.BatchNorm(num_features=c_hidden,
                                 use_running_average=True,
                                 rngs=rngs)
@@ -138,6 +162,7 @@ class DenseNet(nnx.Module):
         x = self.max_pool(x)
         for b in self.blocks:
             x = b(x)
+        x = self.dropout(x)
         x = self.bn(x)
         x = self.act_fn(x)
         x = x.mean(axis=self.mean_axis)
