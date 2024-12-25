@@ -4,6 +4,7 @@
 import datetime
 import os.path
 import platform
+import sys
 
 import jax.random
 import numpy as np
@@ -16,8 +17,9 @@ from torchvision.datasets import CIFAR10
 from tqdm import tqdm
 
 from densenet import DenseNet
+from resnet import ResNet
 
-seed = 12345
+seed = 42
 batch_size = 128
 
 if platform.system() == 'Linux':
@@ -103,6 +105,9 @@ imgs, _ = next(iter(train_loader))
 print("Batch mean", imgs.mean(axis=(0, 1, 2)))
 print("Batch std", imgs.std(axis=(0, 1, 2)))
 
+next(iter(val_loader))
+next(iter(test_loader))
+
 metrics = nnx.MultiMetric(
     accuracy=nnx.metrics.Accuracy(),
     loss=nnx.metrics.Average('loss'),
@@ -138,38 +143,64 @@ def eval_step(model: nnx.Module, metrics: nnx.MultiMetric, batch):
     metrics.update(loss=loss, logits=logits, labels=batch[1])  # In-place updates.
 
 
-def train_classifier(num_epochs=300):
+def train_classifier(model_name: str, num_epochs=300):
+    num_steps_per_epoch = len(train_loader)
+
     # Create a trainer module with specified hyperparameters
     print('create model')
-    model = DenseNet(dims=2,
-                     in_features=3,
-                     num_classes=10,
-                     num_blocks=(6, 6, 6, 6),
-                     init_conv_kernel_size=3,
-                     init_conv_strides=1,
-                     bn_size=2,
-                     growth_rate=16,
-                     dropout_rate=0.2,
-                     pre_dropout=True,
-                     rngs=nnx.rnglib.Rngs(jax.random.PRNGKey(seed)))
-    nnx.display(model)
+    if model_name == 'densenet':
+        model = DenseNet(dims=2,
+                         in_features=3,
+                         num_classes=10,
+                         num_blocks=(6, 6, 6, 6),
+                         init_conv_kernel_size=3,
+                         init_conv_strides=1,
+                         bn_size=2,
+                         growth_rate=16,
+                         dropout_rate=0.2,
+                         pre_dropout=True,
+                         rngs=nnx.rnglib.Rngs(jax.random.PRNGKey(seed)))
+        nnx.display(model)
+        # We decrease the learning rate by a factor of 0.1 after 60% and 85% of the training
+        lr_schedule = optax.piecewise_constant_schedule(
+            init_value=1e-3,
+            boundaries_and_scales={
+                int(num_steps_per_epoch * num_epochs * 0.6): 0.1,
+                int(num_steps_per_epoch * num_epochs * 0.85): 0.1}
+        )
+        optimizer = optax.chain(
+            optax.clip(1.0),  # Clip gradients at 1
+            optax.adamw(lr_schedule, weight_decay=1e-4)
+        )
 
-    # We decrease the learning rate by a factor of 0.1 after 60% and 85% of the training
-    num_steps_per_epoch = len(train_loader)
-    lr_schedule = optax.piecewise_constant_schedule(
-        init_value=1e-3,
-        boundaries_and_scales={
-            int(num_steps_per_epoch * num_epochs * 0.6): 0.1,
-            int(num_steps_per_epoch * num_epochs * 0.85): 0.1}
-    )
-    optimizer = optax.chain(
-        optax.clip(1.0),  # Clip gradients at 1
-        optax.adamw(lr_schedule, weight_decay=1e-4)
-    )
+    elif model_name == 'resnet':
+        model = ResNet(dims=2,
+                       in_features=3,
+                       num_classes=10,
+                       num_blocks=(3, 3, 3),
+                       c_hiddens=(16, 32, 64),
+                       rngs=nnx.rnglib.Rngs(jax.random.PRNGKey(seed)))
+        nnx.display(model)
+        lr_schedule = optax.piecewise_constant_schedule(
+            init_value=0.1,
+            boundaries_and_scales={
+                int(num_steps_per_epoch * num_epochs * 0.6): 0.1,
+                int(num_steps_per_epoch * num_epochs * 0.85): 0.1,
+            }
+        )
+        optimizer = optax.chain(
+            optax.clip(1.0),  # Clip gradients at 1
+            optax.add_decayed_weights(weight_decay=1e-4),
+            optax.sgd(lr_schedule, momentum=0.9)
+        )
+
+    else:
+        print(f'unknown model name: {model_name}')
+        exit(1)
+
     optimizer = nnx.Optimizer(model, optimizer)  # reference sharing
 
     step = 0
-
     t1 = datetime.datetime.now()
     print(f'[{t1}] training begin')
 
@@ -212,9 +243,11 @@ def eval_model(model, metrics, loader):
         eval_step(model, metrics, test_batch)
 
 
-model = train_classifier(num_epochs=300)
+model = train_classifier(model_name=sys.argv[1], num_epochs=300)
 
 # Test trained model
+model.eval()
+
 metrics.reset()
 eval_model(model, metrics, val_loader)
 print('[validate]:')
