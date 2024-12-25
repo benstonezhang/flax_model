@@ -48,7 +48,6 @@ class DenseNet(nnx.Module):
         class DenseLayer(nnx.Module):
             def __init__(self, c_in: int):
                 self.bn1 = nnx.BatchNorm(num_features=c_in,
-                                         use_running_average=True,
                                          rngs=rngs)
                 self.conv1 = nnx.Conv(in_features=c_in,
                                       out_features=bn_size * growth_rate,
@@ -57,7 +56,6 @@ class DenseNet(nnx.Module):
                                       use_bias=False,
                                       rngs=rngs)
                 self.bn2 = nnx.BatchNorm(num_features=bn_size * growth_rate,
-                                         use_running_average=True,
                                          rngs=rngs)
                 self.conv2 = nnx.Conv(in_features=bn_size * growth_rate,
                                       out_features=growth_rate,
@@ -98,7 +96,6 @@ class DenseNet(nnx.Module):
                          c_out: int,  # Out feature size
                          ):
                 self.bn = nnx.BatchNorm(num_features=c_in,
-                                        use_running_average=True,
                                         rngs=rngs)
                 self.conv = nnx.Conv(in_features=c_in,
                                      out_features=c_out,
@@ -149,7 +146,6 @@ class DenseNet(nnx.Module):
 
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs) if pre_dropout else _dummy_fn
         self.bn = nnx.BatchNorm(num_features=c_hidden,
-                                use_running_average=True,
                                 rngs=rngs)
         self.linear = nnx.Linear(in_features=c_hidden,
                                  out_features=num_classes,
