@@ -93,9 +93,10 @@ class ResNet(nnx.Module):
                                       kernel_init=kernel_init,
                                       use_bias=False,
                                       rngs=rngs)
-                if sub_sample:
+                if sub_sample is True:
                     self.bn3 = nnx.BatchNorm(num_features=c_in,
                                              rngs=rngs)
+                    self.act3 = act_fn
                     self.conv3 = nnx.Conv(in_features=c_in,
                                           out_features=c_out,
                                           kernel_size=win_size_1,
@@ -103,16 +104,8 @@ class ResNet(nnx.Module):
                                           kernel_init=kernel_init,
                                           use_bias=False,
                                           rngs=rngs)
-
-                    def sub_sample_fn(x):
-                        x = self.bn3(x)
-                        x = act_fn(x)
-                        x = self.conv3(x)
-                        return x
-
-                    self.sub_sample = sub_sample_fn
                 else:
-                    self.sub_sample = _dummy_fn
+                    self.bn3 = self.act3 = self.conv3 = _dummy_fn
 
             def __call__(self, x):
                 z = self.bn1(x)
@@ -121,7 +114,9 @@ class ResNet(nnx.Module):
                 z = self.bn2(z)
                 z = act_fn(z)
                 z = self.conv2(z)
-                r = self.sub_sample(x)
+                r = self.bn3(x)
+                r = self.act3(r)
+                r = self.conv3(r)
                 x_out = z + r
                 return x_out
 
@@ -136,18 +131,12 @@ class ResNet(nnx.Module):
             block_cls = ResNetBlock
             self.bn = nnx.BatchNorm(num_features=c_hiddens[0],
                                     rngs=rngs)
-
-            def first_conv_fn(x):
-                x = self.conv(x)
-                x = self.bn(x)
-                x = act_fn(x)
-                return x
-
-            self.first_conv = first_conv_fn
+            self.act1 = act_fn
         else:
             block_cls = PreActResNetBlock
             # If pre-activation block, we do not apply non-linearities yet
-            self.first_conv = self.conv
+            self.bn = _dummy_fn
+            self.act1 = _dummy_fn
 
         # Creating the ResNet blocks
         self.blocks = []
@@ -173,7 +162,9 @@ class ResNet(nnx.Module):
 
     def __call__(self, x):
         # A first convolution on the original image to scale up the channel size
-        x = self.first_conv(x)
+        x = self.conv(x)
+        x = self.bn(x)
+        x = self.act1(x)
         for b in self.blocks:
             x = b(x)
         # Mapping to classification output

@@ -143,7 +143,7 @@ def eval_step(model: nnx.Module, metrics: nnx.MultiMetric, batch):
     metrics.update(loss=loss, logits=logits, labels=batch[1])  # In-place updates.
 
 
-def train_classifier(model_name: str, num_epochs=300):
+def train_classifier(model_name: str, num_epochs=200):
     num_steps_per_epoch = len(train_loader)
 
     # Create a trainer module with specified hyperparameters
@@ -243,7 +243,7 @@ def eval_model(model, metrics, loader):
         eval_step(model, metrics, test_batch)
 
 
-model = train_classifier(model_name=sys.argv[1], num_epochs=300)
+model = train_classifier(model_name=sys.argv[1], num_epochs=200)
 
 # Test trained model
 model.eval()
